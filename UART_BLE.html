@@ -1,0 +1,201 @@
+<html>
+<head>
+  <title>Web-Bluetooth test with the Nordic UART service</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+<style>
+body {
+  background-color: #ffffff;
+  font-family: "Helvetica", "Arial", sans-serif;
+}
+pre {
+  font-family: monospace;
+}
+.output {
+  background-color: #f0f0f0;
+  border-radius: 0.75em;
+  display: block;
+  margin: 0.5em;
+  padding: 0.5em;
+}
+#log {
+  margin: .5em 0;
+  white-space: pre-wrap;
+}
+#log:empty {
+  display: none;
+}
+</style>
+</head>
+<body>
+
+<h1>Using the Nordic UART service with Web-Bluetooth</h1>
+<form>
+  <button id="connect">Connect</button>
+  <button id="disconnect">Disconnect</button>
+  <button id="send">Send 'Hello world'</button>
+</form>
+
+<h3>Log output</h3>
+<div id="output" class="output">
+  <pre id="log"></pre>
+</div>
+
+<script>
+var NUS_SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+var NUS_TX_CHARACTERISTIC_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
+var NUS_RX_CHARACTERISTIC_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
+var bluetoothDevice = null;
+var txCharacteristic = null;
+var rxCharacteristic = null;
+var Logger = {
+  log: function(line) {
+    document.querySelector('#log').textContent += line + '\n';
+  },
+  clearLog: function() {
+    document.querySelector('#log').textContent = '';
+  },
+};
+var log = Logger.log;
+function onDisconnected(event) {
+  log('Bluetooth Device disconnected');
+  if (txCharacteristic) {
+    txCharacteristic.removeEventListener('characteristicvaluechanged', handleNotifications);
+  }
+  txCharacteristic = null;
+  rxCharacteristic = null;
+}
+function onStartButtonClick() {
+  let serviceUuid = NUS_SERVICE_UUID;
+  let tx_characteristicUuid = NUS_TX_CHARACTERISTIC_UUID;
+  let rx_characteristicUuid = NUS_RX_CHARACTERISTIC_UUID;
+  log('Requesting Bluetooth Device...');
+  navigator.bluetooth.requestDevice({filters: [{services: [serviceUuid]}]})
+  .then(device => {
+    bluetoothDevice = device;
+    bluetoothDevice.addEventListener('gattserverdisconnected', onDisconnected);
+    log('Connecting to GATT Server...');
+    return device.gatt.connect();
+  })
+  .then(server => {
+    log('Getting Service...');
+    return server.getPrimaryService(serviceUuid);
+  })
+  .then(service => {
+    log('Getting Characteristics...');
+    return Promise.all([
+      service.getCharacteristic(tx_characteristicUuid)
+        .then(characteristic => {
+          txCharacteristic = characteristic;
+          log('Tx charactersitic obtained');
+          return txCharacteristic.startNotifications().then(_ => {
+            log('Notifications started');
+            txCharacteristic.addEventListener('characteristicvaluechanged', handleNotifications);
+          });
+        }),
+      service.getCharacteristic(rx_characteristicUuid)
+        .then(rx_characteristic => {
+          rxCharacteristic = rx_characteristic;
+          log('Rx charactersitic obtained');
+        }),
+    ]);
+  })
+  .catch(error => {
+    log('Argh! ' + error);
+  });
+}
+function onStopButtonClick() {
+  if (txCharacteristic) {
+    log('Stopping notifications...');
+    try {
+      txCharacteristic.removeEventListener('characteristicvaluechanged', handleNotifications);
+    }
+    catch(error) {
+      log('Argh! ' + error);
+    }
+    txCharacteristic = null;
+    // txCharacteristic.stopNotifications()
+    // .then(_ => {
+    //   log('Notifications stopped');
+    // })
+    // .catch(error => {
+    //   log('Argh! ' + error);
+    // });
+  }
+  if (bluetoothDevice) {
+    if (bluetoothDevice.gatt.connected) {
+      log('Disconnecting from Bluetooth Device...');
+      bluetoothDevice.gatt.disconnect();
+    }
+  }
+}
+function onSendButtonClick() {
+  if (rxCharacteristic) {
+    log('Sending string via RX characteristic...');
+    var repeat = function (count) {
+      if (count > 0) {
+        rxCharacteristic.writeValue(str2ab("Hello world " + count + " abcdefghijklmnopqrstuvwxyz\n"))
+        .then(_ => {
+          repeat(count - 1);
+        })
+        .catch(error => {
+          log('Argh! ' + error);
+        });
+      }
+    }
+    repeat(50);
+  }
+}
+function handleNotifications(event) {
+  let value = event.target.value;
+  result = ''
+  for (let i = 0; i < value.byteLength; i++) {
+    result += String.fromCharCode(value.getUint8(i));
+  }
+  log('> ' + result);
+}
+function isWebBluetoothEnabled() {
+  if (navigator.bluetooth) {
+    return true;
+  }
+  else {
+    log('Web Bluetooth API is not available.\n' +
+      'Please make sure the Web Bluetooth flag is enabled.');
+    return false;
+  }
+}
+function str2ab(str) {
+  var buf = new ArrayBuffer(str.length);
+  var bufView = new Uint8Array(buf);
+  for (var i=0, strLen=str.length; i<strLen; i++) {
+    bufView[i] = str.charCodeAt(i);
+  }
+  return buf;
+}
+document.querySelector('#connect').addEventListener('click', function(event) {
+  event.stopPropagation();
+  event.preventDefault();
+  if (isWebBluetoothEnabled()) {
+    Logger.clearLog();
+    onStartButtonClick();
+  }
+});
+document.querySelector('#disconnect').addEventListener('click', function(event) {
+  event.stopPropagation();
+  event.preventDefault();
+  if (isWebBluetoothEnabled()) {
+    onStopButtonClick();
+  }
+});
+document.querySelector('#send').addEventListener('click', function(event) {
+  event.stopPropagation();
+  event.preventDefault();
+  if (isWebBluetoothEnabled()) {
+    onSendButtonClick();
+  }
+});
+</script>
+
+</body>
+</html>
